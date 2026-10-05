@@ -9,9 +9,9 @@ async function fixture(t) {
   const cwd=await mkdtemp(join(tmpdir(),'cf-setup-'));
   await copyFile('wrangler.example.jsonc',join(cwd,'wrangler.example.jsonc'));
   t.after(()=>rm(cwd,{recursive:true,force:true}));
-  const answers=['proxy.example.test','socks.example.test','1080','test-user','n','y'];
+  const answers=['proxy.example.test','socks.example.test','1080','test-user','y'];
   const calls=[],logs=[],namespaces=[];let authenticated=false,failDeploy=false,failAfterCreate=false;
-  const options={cwd,ask:async()=>answers.shift(),hidden:async()=> 'private-test-password',log:x=>logs.push(x),run:async(args)=>{
+  const options={cwd,detect:async()=>({mode:'plain'}),ask:async()=>answers.shift(),hidden:async()=> 'private-test-password',log:x=>logs.push(x),run:async(args)=>{
     calls.push(args);
     if(args[0]==='whoami'){if(!authenticated)throw Error('logged out');return JSON.stringify({loggedIn:true,accounts:[account]});}
     if(args[0]==='login'){authenticated=true;return '';}
@@ -49,4 +49,13 @@ test('cancel makes no cloud calls and saves no credentials',async t=>{
 });
 test('invalid input stops before cloud changes',async t=>{
   const f=await fixture(t);f.answers[2]='0';await assert.rejects(setup(f.options));assert.deepEqual(f.calls,[]);
+});
+
+test('verified TLS detection enables TLS without a manual question',async t=>{
+  const f=await fixture(t);f.options.detect=async args=>{assert.deepEqual(Object.keys(args).sort(),['auth','host','port']);return {mode:'tls'};};
+  await setup(f.options);assert.equal(JSON.parse(await readFile(join(f.cwd,'wrangler.local.jsonc'))).vars.UPSTREAM_TLS,'true');
+});
+test('inconclusive detection stops on empty answer instead of assuming plaintext',async t=>{
+  const f=await fixture(t);f.options.detect=async()=>({mode:'unknown',reason:'certificate'});f.answers[4]='';
+  await setup(f.options);assert.deepEqual(f.calls,[]);assert.deepEqual(await readdir(f.cwd),['wrangler.example.jsonc']);
 });

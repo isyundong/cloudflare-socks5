@@ -7,6 +7,7 @@ import {resolve, join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {validHost, authBytes} from '../src/protocol.mjs';
 import {validConfig} from '../src/handler.mjs';
+import {detectUpstream} from './detect-upstream.mjs';
 const CONFIG = 'wrangler.local.jsonc', SECRETS = 'secrets.local.json';
 async function readJSON(path) {
   try { return JSON.parse(await readFile(path, 'utf8')); }
@@ -17,7 +18,7 @@ async function save(path, value) {
   await writeFile(temp, typeof value === 'string' ? value : JSON.stringify(value, null, 2) + '\n', {mode: 0o600, flag: 'wx'});
   await rename(temp, path); await chmod(path, 0o600);
 }
-export async function setup({cwd = process.cwd(), ask, hidden, log = console.log, run}) {
+export async function setup({cwd = process.cwd(), ask, hidden, log = console.log, run, detect = detectUpstream}) {
   const path = file => join(cwd, file);
   let config = await readJSON(path(CONFIG)), secrets = await readJSON(path(SECRETS));
   if (config && !secrets) throw new Error('缺少 secrets.local.json。请恢复原文件；不会自动生成新凭据覆盖线上配置。');
@@ -30,14 +31,28 @@ export async function setup({cwd = process.cwd(), ask, hidden, log = console.log
     const user = await ask('4. SOCKS5 用户名（无认证直接回车）');
     const pass = user ? await hidden('   SOCKS5 密码（隐藏输入）') : '';
     if (user) authBytes(user, pass);
-    const tls = (await ask('5. 上游是否支持 SOCKS over TLS？普通 SOCKS5 直接回车', 'n')).toLowerCase();
-    if (!['y','n'].includes(tls)) throw new Error('TLS 选项请填 y 或 n。');
+
     config = JSON.parse(await readFile(path('wrangler.example.jsonc'), 'utf8'));
     config.name = `cf-socks-${randomBytes(4).toString('hex')}`;
-    config.vars = {PUBLIC_HOST: host, UPSTREAM_HOST: upstream, UPSTREAM_PORT: port, UPSTREAM_TLS: tls === 'y' ? 'true' : 'false', CARRIER: 'all'};
+    config.vars = {PUBLIC_HOST: host, UPSTREAM_HOST: upstream, UPSTREAM_PORT: port, UPSTREAM_TLS: 'false', CARRIER: 'all'};
     config.routes = [{pattern: host, custom_domain: true}];
     secrets = {UUID: randomUUID(), SUB_TOKEN: randomBytes(32).toString('base64url'), ...(user ? {UPSTREAM_USER: user, UPSTREAM_PASS: pass} : {})};
     if (!host.includes('.') || !validHost(host) || !validConfig({...config.vars, ...secrets})) throw new Error('域名、端口或 SOCKS5 配置格式不正确，尚未部署。');
+    log('正在自动检测 SOCKS5 连接方式（最多约 7 秒，不发送账号密码）…');
+    const detected = await detect({host:upstream, port:Number(port), auth:Boolean(user)});
+    if (detected.mode === 'tls' || detected.mode === 'plain') {
+      config.vars.UPSTREAM_TLS = detected.mode === 'tls' ? 'true' : 'false';
+      log(detected.mode === 'tls' ? '已检测：SOCKS over TLS，证书验证通过。' : '已检测：普通 SOCKS5。');
+      if (detected.authRejected) log('上游拒绝了当前认证方式，请核对是否需要用户名密码；本次未验证密码。');
+    } else {
+      log(detected.reason === 'certificate'
+        ? '检测到 TLS 证书错误，不能自动判断可用配置。请核对上游域名和证书，未关闭证书校验。'
+        : '本机未能确认连接方式，可能是超时、白名单限制或该端口并非 SOCKS5。');
+      const choice = await ask('手动指定：1=普通 SOCKS5，2=SOCKS over TLS，回车退出');
+      if (!['1','2'].includes(choice)) { log('已退出，未部署。'); return; }
+      config.vars.UPSTREAM_TLS = choice === '2' ? 'true' : 'false';
+    }
+
   } else {
     if (!validConfig({...config.vars, ...secrets})) throw new Error('已有配置不完整，请检查本地配置和凭据；不会覆盖。');
     log('检测到已有配置，将继续部署并保留节点凭据和订阅地址。');
