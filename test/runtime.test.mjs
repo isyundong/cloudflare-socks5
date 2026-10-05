@@ -27,7 +27,7 @@ test('workerd bridges real TCP SOCKS5 handshake and bidirectional data', {timeou
   const received=new Promise((resolve,reject)=>{
     ws.addEventListener('message',e=>{chunks.push(new Uint8Array(e.data));if(chunks.reduce((a,b)=>a+b.length,0)>=7)resolve();});
     ws.addEventListener('error',()=>reject(Error('WebSocket failed')));
-    ws.addEventListener('close',e=>reject(Error(`Closed before echo: ${e.code}; accepted=${accepted}`))); 
+    ws.addEventListener('close',e=>reject(Error(`Closed before echo: ${e.code}; accepted=${accepted}`)));
   });
   ws.send(new Uint8Array([0,...uuidBytes(UUID),0,1,1,187,1,1,2,3,4,72,69,76,76,79]));
   await received;
