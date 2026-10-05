@@ -1,0 +1,22 @@
+{
+  "name": "cloudflare-socks5",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "setup": "node tools/setup.mjs",
+    "dev": "wrangler dev --config wrangler.example.jsonc",
+    "deploy": "wrangler deploy --config wrangler.local.jsonc",
+    "test": "node --test test/*.test.mjs",
+    "check": "wrangler deploy --dry-run --config wrangler.example.jsonc --outdir build"
+  },
+  "devDependencies": {
+    "miniflare": "5.20261001.0-alpha",
+    "wrangler": "4.147.0",
+    "ws": "8.22.0",
+    "yaml": "2.9.1"
+  }
+}

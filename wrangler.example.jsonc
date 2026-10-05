@@ -1,0 +1,17 @@
+{
+  "name": "cloudflare-socks5",
+  "main": "src/worker.mjs",
+  "compatibility_date": "2026-09-01",
+  "workers_dev": false,
+  "preview_urls": false,
+  "logpush": false,
+  "observability": {"enabled": false},
+  "triggers": {"crons": ["*/30 * * * *"]},
+  "vars": {
+    "PUBLIC_HOST": "proxy.example.com",
+    "UPSTREAM_HOST": "socks.example.net",
+    "UPSTREAM_PORT": "1080",
+    "UPSTREAM_TLS": "false",
+    "CARRIER": "all"
+  }
+}
