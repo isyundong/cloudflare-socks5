@@ -1,40 +1,126 @@
 import {createInterface} from 'node:readline/promises';
-import {readFile, writeFile} from 'node:fs/promises';
+import {Writable} from 'node:stream';
+import {readFile, writeFile, rename, chmod} from 'node:fs/promises';
 import {randomBytes, randomUUID} from 'node:crypto';
-import {validHost} from '../src/protocol.mjs';
-const rl = createInterface({input: process.stdin, output: process.stdout});
-async function ask(label, fallback = '') { return (await rl.question(`${label}${fallback ? ` [${fallback}]` : ''}: `)).trim() || fallback; }
-try {
-  for (const path of ['wrangler.local.jsonc', 'secrets.local.json', 'subscription.local.txt']) {
-    try { await readFile(path); throw new Error(`${path} 已存在；向导不会覆盖现有配置或凭据。`); }
-    catch (error) { if (error.code !== 'ENOENT') throw error; }
+import {spawn} from 'node:child_process';
+import {resolve, join} from 'node:path';
+import {fileURLToPath} from 'node:url';
+import {validHost, authBytes} from '../src/protocol.mjs';
+import {validConfig} from '../src/handler.mjs';
+const CONFIG = 'wrangler.local.jsonc', SECRETS = 'secrets.local.json';
+async function readJSON(path) {
+  try { return JSON.parse(await readFile(path, 'utf8')); }
+  catch (e) { if (e.code === 'ENOENT') return null; throw new Error(`无法读取 ${path}，请保留文件并检查格式。`); }
+}
+async function save(path, value) {
+  const temp = `${path}.${randomBytes(6).toString('hex')}.tmp`;
+  await writeFile(temp, typeof value === 'string' ? value : JSON.stringify(value, null, 2) + '\n', {mode: 0o600, flag: 'wx'});
+  await rename(temp, path); await chmod(path, 0o600);
+}
+export async function setup({cwd = process.cwd(), ask, hidden, log = console.log, run}) {
+  const path = file => join(cwd, file);
+  let config = await readJSON(path(CONFIG)), secrets = await readJSON(path(SECRETS));
+  if (config && !secrets) throw new Error('缺少 secrets.local.json。请恢复原文件；不会自动生成新凭据覆盖线上配置。');
+  if (!config && secrets) throw new Error('缺少 wrangler.local.jsonc。请恢复原文件，现有凭据已保留。');
+  log('\nCloudflare SOCKS5 · 安装向导\nClash → CF 优选入口 → 你的 SOCKS5 → 目标网站\n');
+  if (!config) {
+    const host = (await ask('1. 你的订阅域名（如 proxy.example.com）')).trim().toLowerCase();
+    const upstream = (await ask('2. SOCKS5 公网 IP 或域名')).trim();
+    const port = await ask('3. SOCKS5 端口', '1080');
+    const user = await ask('4. SOCKS5 用户名（无认证直接回车）');
+    const pass = user ? await hidden('   SOCKS5 密码（隐藏输入）') : '';
+    if (user) authBytes(user, pass);
+    const tls = (await ask('5. 上游是否支持 SOCKS over TLS？普通 SOCKS5 直接回车', 'n')).toLowerCase();
+    if (!['y','n'].includes(tls)) throw new Error('TLS 选项请填 y 或 n。');
+    config = JSON.parse(await readFile(path('wrangler.example.jsonc'), 'utf8'));
+    config.name = `cf-socks-${randomBytes(4).toString('hex')}`;
+    config.vars = {PUBLIC_HOST: host, UPSTREAM_HOST: upstream, UPSTREAM_PORT: port, UPSTREAM_TLS: tls === 'y' ? 'true' : 'false', CARRIER: 'all'};
+    config.routes = [{pattern: host, custom_domain: true}];
+    secrets = {UUID: randomUUID(), SUB_TOKEN: randomBytes(32).toString('base64url'), ...(user ? {UPSTREAM_USER: user, UPSTREAM_PASS: pass} : {})};
+    if (!host.includes('.') || !validHost(host) || !validConfig({...config.vars, ...secrets})) throw new Error('域名、端口或 SOCKS5 配置格式不正确，尚未部署。');
+  } else {
+    if (!validConfig({...config.vars, ...secrets})) throw new Error('已有配置不完整，请检查本地配置和凭据；不会覆盖。');
+    log('检测到已有配置，将继续部署并保留节点凭据和订阅地址。');
   }
-  console.log('\nCloudflare SOCKS5 · 部署准备\n本步骤只写本地配置，不部署、不改 DNS。\n');
-  const name = await ask('Worker 名称', 'cloudflare-socks5');
-  const host = (await ask('你自己的 Worker 域名，如 proxy.example.com')).toLowerCase();
-  const upstream = await ask('已有 SOCKS5 的公网 IP 或域名（不能是 CF 橙云地址）');
-  const port = await ask('已有 SOCKS5 端口', '1080');
-  const tls = await ask('上游是否明确支持 SOCKS over TLS？true / false', 'false');
-  const carrier = await ask('优选来源 all / ct=电信 / cu=联通 / cmcc=移动', 'all');
-  const kv = await ask('PREFERRED KV 命名空间 ID（先运行 npx wrangler kv namespace create PREFERRED）');
-  if (!/^[a-z][a-z0-9-]{0,62}$/.test(name) || !validHost(host) || !host.includes('.') ||
-      !(validHost(upstream) || /^[0-9a-f]*:[0-9a-f:]+$/i.test(upstream)) ||
-      !Number.isInteger(Number(port)) || Number(port) < 1 || Number(port) > 65535 || Number(port) === 25 ||
-      !['true','false'].includes(tls) || !['all','ct','cu','cmcc'].includes(carrier) || !/^[a-f0-9]{32}$/i.test(kv)) throw new Error('输入格式不正确；未生成文件。');
-  const config = JSON.parse(await readFile('wrangler.example.jsonc', 'utf8'));
-  config.name = name;
-  config.vars = {PUBLIC_HOST: host, UPSTREAM_HOST: upstream, UPSTREAM_PORT: port, UPSTREAM_TLS: tls, CARRIER: carrier};
-  config.routes = [{pattern: host, custom_domain: true}];
-  config.kv_namespaces = [{binding: 'PREFERRED', id: kv}];
-  const secrets = {UUID: randomUUID(), SUB_TOKEN: randomBytes(32).toString('base64url')};
-  await writeFile('wrangler.local.jsonc', JSON.stringify(config, null, 2) + '\n', {mode: 0o600, flag: 'wx'});
-  await writeFile('secrets.local.json', JSON.stringify(secrets, null, 2) + '\n', {mode: 0o600, flag: 'wx'});
-  await writeFile('subscription.local.txt', `https://${host}/s/${secrets.SUB_TOKEN}/Cloudflare-SOCKS5.yaml\n`, {mode: 0o600, flag: 'wx'});
-  console.log('\n准备完成。配置和新生成的凭据已存入被 Git 忽略的本地文件。');
-  console.log('1. npm run deploy');
-  console.log('2. npx wrangler secret bulk secrets.local.json --config wrangler.local.jsonc');
-  console.log('3. 上游有账号密码时，用 wrangler secret put 分别填写 UPSTREAM_USER、UPSTREAM_PASS（README 有命令）。');
-  console.log('4. 将 subscription.local.txt 中的地址导入 Mihomo 客户端。');
-  if (tls === 'false') console.log('\n当前上游使用普通 SOCKS5：Worker 到上游这一段不额外加密；HTTPS 网站自身的 TLS 仍有效。');
-} catch (error) { console.error(error.message); process.exitCode = 1; }
-finally { rl.close(); }
+  log(`\n订阅域名：${config.vars.PUBLIC_HOST}\nSOCKS5 上游：${config.vars.UPSTREAM_HOST}:${config.vars.UPSTREAM_PORT}\n优选：电信 / 联通 / 移动，自动更新`);
+  if (config.vars.UPSTREAM_TLS === 'false') log('上游使用普通 SOCKS5，Worker 到上游这一段不额外加密。');
+  if ((await ask('开始部署到你的 Cloudflare？', 'y')).toLowerCase() !== 'y') { log('已取消，未修改云端。'); return; }
+  // Save before network calls so failed runs resume with the same credentials/name.
+  await save(path(SECRETS), secrets); await save(path(CONFIG), config);
+  log('\n[1/3] 检查 Cloudflare 登录…');
+  let user;
+  try { user = JSON.parse(await run(['whoami','--json'], true)); } catch {}
+  if (!user?.loggedIn) {
+    log('浏览器将打开 Cloudflare 授权页面，请完成登录。');
+    await run(['login']); user = JSON.parse(await run(['whoami','--json'], true));
+  }
+  const accounts = user.accounts || [];
+  if (!accounts.length) throw new Error('未找到可用 Cloudflare 账户。');
+  if (config.account_id) {
+    if (!accounts.some(a => a.id === config.account_id)) throw new Error('当前登录不属于原部署账户，请切换账户后重试。');
+  } else {
+    let selected = accounts[0];
+    if (accounts.length > 1) {
+      accounts.forEach((a,i) => log(`  ${i + 1}. ${a.name}`));
+      selected = accounts[Number(await ask('选择域名所在账户', '1')) - 1];
+      if (!selected) throw new Error('账户选择无效。');
+    }
+    config.account_id = selected.id; await save(path(CONFIG), config);
+  }
+  const args = ['--config', CONFIG];
+  log('[2/3] 准备优选数据存储…');
+  if (!config.kv_namespaces?.some(k => k.binding === 'PREFERRED' && /^[a-f0-9]{32}$/i.test(k.id))) {
+    const title = `${config.name}-preferred`;
+    // Reconcile creation after an interrupted run, instead of duplicating resources.
+    let list = JSON.parse(await run(['kv','namespace','list',...args], true));
+    let found = list.find(n => n.title === title);
+    if (!found) {
+      await run(['kv','namespace','create',title,'--update-config=false',...args]);
+      list = JSON.parse(await run(['kv','namespace','list',...args], true));
+      found = list.find(n => n.title === title);
+    }
+    if (!found || !/^[a-f0-9]{32}$/i.test(found.id)) throw new Error('KV 创建结果尚未确认，请稍后重新运行 npm start；配置已保留。');
+    config.kv_namespaces = [...(config.kv_namespaces || []).filter(k => k.binding !== 'PREFERRED'), {binding:'PREFERRED',id:found.id}];
+    await save(path(CONFIG), config);
+  }
+  log('[3/3] 部署 Worker、绑定域名并上传凭据…');
+  await run(['deploy',...args,'--secrets-file',SECRETS]);
+  const url = `https://${config.vars.PUBLIC_HOST}/s/${secrets.SUB_TOKEN}/Cloudflare-SOCKS5.yaml`;
+  await save(path('subscription.local.txt'), `${url}\n`);
+  log(`\n部署命令执行成功。将下面地址导入 Clash/Mihomo：\n\n${url}\n\n选择 PROXY → 自动优选。域名证书和定时任务可能还需等待生效。\n订阅地址已保存到 subscription.local.txt，请勿公开。`);
+  return url;
+}
+function wrangler(args, capture = false) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [fileURLToPath(new URL('../node_modules/wrangler/bin/wrangler.js', import.meta.url)), ...args], {
+      stdio: capture ? ['ignore','pipe','pipe'] : 'inherit',
+      env: {...process.env, WRANGLER_SEND_METRICS:'false'},
+    });
+    let output = '';
+    if (capture) { child.stdout.on('data', b => {output += b;}); child.stderr.on('data', () => {}); }
+    child.on('error', () => reject(new Error('无法启动 Wrangler，请先运行 npm ci。')));
+    child.on('close', code => code === 0 ? resolve(output) : reject(new Error(`Cloudflare 步骤未完成（${args[0]}）。配置已保留，可重新运行 npm start。`)));
+  });
+}
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  let muted = false;
+  const output = new Writable({write(chunk, _encoding, done) { if (!muted) process.stdout.write(chunk); done(); }});
+  output.isTTY = process.stdout.isTTY; output.columns = process.stdout.columns;
+  const rl = createInterface({input:process.stdin, output, terminal:Boolean(process.stdin.isTTY && process.stdout.isTTY)});
+  const ask = async (label, fallback = '') => (await rl.question(`${label}${fallback ? ` [${fallback}]` : ''}: `)) || fallback;
+  const hidden = async label => {
+    if (!process.stdin.isTTY) throw new Error('输入密码需要交互终端，请直接运行 npm start。');
+    process.stdout.write(`${label}: `); muted = true;
+    try { return await rl.question(''); } finally { muted = false; process.stdout.write('\n'); }
+  };
+  // Suspend this readline while Wrangler owns stdin (browser login/account prompts).
+  const run = async (...args) => {
+    const raw = process.stdin.isRaw; rl.pause();
+    if (raw) process.stdin.setRawMode(false);
+    try { return await wrangler(...args); }
+    finally { if (raw) process.stdin.setRawMode(true); rl.resume(); }
+  };
+  try { await setup({ask,hidden,run}); }
+  catch(e) { console.error(`\n${e.message}`); process.exitCode = 1; }
+  finally { rl.close(); }
+}

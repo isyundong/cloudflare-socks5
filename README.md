@@ -8,36 +8,25 @@
 
 ## 快速开始
 
-准备：电脑安装 Node.js 22+、Git；一个 Cloudflare 托管域名；能从公网连接的 SOCKS5 上游。使用 **Mihomo 内核**的 Clash 客户端。
+准备好 **Node.js 22+、Git、自己的 Cloudflare 域名和已有 SOCKS5**。
+
+在电脑终端复制运行：
 
 ```bash
-git clone https://github.com/isyundong/cloudflare-socks5.git
-cd cloudflare-socks5
+git clone https://github.com/isyundong/cloudflare-socks5.git && cd cloudflare-socks5
 npm ci
-npx wrangler login
-npx wrangler kv namespace create PREFERRED
-npm run setup
+npm start
 ```
 
-向导会填写：自己的域名、SOCKS5 地址和端口、运营商、上一步返回的 KV ID。默认选择全部运营商。它只生成本地配置和新随机凭据，不上传。
+然后跟着向导填 **域名、SOCKS5 地址、端口、用户名和密码**。普通 SOCKS5 的 TLS 选项直接回车。
 
-接着部署：
+确认后，程序会打开 Cloudflare 登录页面（已登录则跳过），自动创建优选存储、绑定域名、部署并上传凭据。多个账户时选择域名所在账户即可，**不用自己填写 KV ID 或执行上传密钥命令**。
 
-```bash
-npm run deploy
-npx wrangler secret bulk secrets.local.json --config wrangler.local.jsonc
-```
+完成后，复制终端显示的订阅地址，导入 **Mihomo 内核的 Clash**，选择 **PROXY → 自动优选**。地址也保存在 `subscription.local.txt`。本机默认混合代理端口是 `7890`，部分图形客户端会使用自己的端口设置。
 
-如果上游需要账号密码，再运行以下命令，按提示分别输入（不要写进代码）：
+中途失败，重新运行 `npm start` 即可继续；已有配置和凭据会复用。域名证书和定时任务首次生效可能需要等待。
 
-```bash
-npx wrangler secret put UPSTREAM_USER --config wrangler.local.jsonc
-npx wrangler secret put UPSTREAM_PASS --config wrangler.local.jsonc
-```
-
-打开本机 `subscription.local.txt`，将其中的订阅地址导入 Clash，选择 **PROXY → 自动优选**。上游密码不会进入订阅。生成的混合 HTTP/SOCKS5 监听地址是 `127.0.0.1:7890`；部分图形客户端会用自身的端口设置覆盖它。
-
-未填完必需配置时，Worker 返回 503，不开放代理。自定义域名绑定和证书生效后才能连接；首次创建 Cron 可能需要等待 Cloudflare 生效。
+本地 `secrets.local.json` 保存节点凭据和填写的上游账号密码，设置为仅当前用户可读写并被 Git 忽略；请勿分享该文件或订阅链接。Cloudflare 登录由 Wrangler 管理，不需要把 API Token 填进本项目。
 
 ## 自动更新
 

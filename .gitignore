@@ -8,3 +8,6 @@ secrets.local.json
 subscription.local.txt
 coverage/
 .DS_Store
+*.local.json.*.tmp
+*.local.jsonc.*.tmp
+*.local.txt.*.tmp
