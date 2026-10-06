@@ -38,7 +38,13 @@ export function createHandler(connect) {
       });
       let pools = await readPools(env);
       if (!pools.some(p => p.entries.length)) {
-        await refresh(env); pools = await readPools(env);
+        const fresh = await refresh(env);
+        // KV can cache a missing key. Use the successful response immediately,
+        // rather than rereading a negatively cached value after writing it.
+        pools = pools.map(pool => {
+          const result = fresh.find(item => item.carrier === pool.carrier && item.ok);
+          return result ? {carrier: result.carrier, updatedAt: result.updatedAt, entries: result.entries} : pool;
+        });
       }
       if (match[2] === 'status') return reply(JSON.stringify({
         refreshMinutes: 30, probeMinutes: 5, configuredKV: Boolean(env.PREFERRED),

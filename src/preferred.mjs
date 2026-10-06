@@ -40,7 +40,8 @@ export async function fetchList(carrier, fetcher = fetch) {
   try {
     return await Promise.race([timeout, (async () => {
       const response = await fetcher(`https://cf.090227.xyz/${carrier}?ips=12`, {
-        signal: controller.signal, redirect: 'error', credentials: 'omit',
+        // Workers supports manual, not redirect:error. Reject 3xx below.
+        signal: controller.signal, redirect: 'manual', credentials: 'omit',
         headers: {Accept: 'text/plain'},
       });
       if (!response.ok || Number(response.headers.get('content-length')) > 32768 || !response.body) throw new Error('Source unavailable');
@@ -63,7 +64,7 @@ export async function refresh(env, fetcher = fetch, now = Date.now()) {
     try {
       const entries = await fetchList(carrier, fetcher);
       await env.PREFERRED.put(`pool:${carrier}`, JSON.stringify({updatedAt: now, entries}));
-      return {carrier, ok: true, count: entries.length};
+      return {carrier, ok: true, count: entries.length, entries, updatedAt: now};
     } catch { return {carrier, ok: false}; } // Preserve the last successful pool on failure.
   }));
 }

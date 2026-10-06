@@ -33,3 +33,17 @@ test('workerd bridges real TCP SOCKS5 handshake and bidirectional data', {timeou
   await received;
   assert.deepEqual(chunks.flatMap(x=>[...x]),[0,0,72,69,76,76,79]);assert.equal(accepted,1);ws.close();
 });
+
+test('workerd accepts public source fetch options and rejects redirects without following them',async t=>{
+  let redirect=false;const calls=[];
+  const mf=new Miniflare(convertV4MiniflareOptions({modules:[
+    {type:'ESModule',path:'source-probe.mjs',contents:`import {fetchList} from './src/preferred.mjs';export default {async fetch(){try{return Response.json(await fetchList('ct'));}catch{return new Response('rejected',{status:502});}}}`},
+    {type:'ESModule',path:'src/preferred.mjs'},
+  ],compatibilityDate:'2026-09-01',outboundService:request=>{
+    calls.push(request.url);
+    return redirect?new Response(null,{status:302,headers:{Location:'https://untrusted.example/'}}):new Response('104.17.1.1#source');
+  }}));t.after(()=>mf.dispose());
+  const success=await mf.dispatchFetch('http://localhost/');assert.equal(success.status,200);assert.equal((await success.json())[0].address,'104.17.1.1');
+  redirect=true;assert.equal((await mf.dispatchFetch('http://localhost/')).status,502);
+  assert.deepEqual(calls,['https://cf.090227.xyz/ct?ips=12','https://cf.090227.xyz/ct?ips=12']);
+});

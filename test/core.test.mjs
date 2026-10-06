@@ -49,7 +49,7 @@ test('public source parser deduplicates and excludes private and non-CF relay IP
 test('fixed public fetch sends no credentials, rejects redirects and excessive bodies', async()=> {
   let called; await fetchList('ct', async(url,options)=>{called={url,options};return new Response('104.17.1.1#entry');});
   assert.equal(called.url,'https://cf.090227.xyz/ct?ips=12');assert.deepEqual(called.options.headers,{Accept:'text/plain'});
-  assert.equal(called.options.redirect,'error');assert.equal(called.options.credentials,'omit');
+  assert.equal(called.options.redirect,'manual');assert.equal(called.options.credentials,'omit');
   await assert.rejects(fetchList('other',()=>{}));
   await assert.rejects(fetchList('ct',async()=>new Response('x'.repeat(32769))));
   await assert.rejects(fetchList('ct',async()=>new Response('104.17.1.1',{status:302})));
@@ -97,4 +97,11 @@ test('stalled public body times out and aborts without discarding last-good data
 test('corrupt cache entries cannot become nodes or crash the provider',async()=> {
   const now=Date.now();const e={...env,PREFERRED:kv()};await e.PREFERRED.put('pool:ct',JSON.stringify({updatedAt:now,entries:[null,{}, {carrier:'ct',address:'127.0.0.1'},{carrier:'ct',address:'104.17.1.1'}]}));
   assert.equal((await readPools(e,now))[0].entries.length,1);
+});
+
+test('first provider response uses fetched IPs even when KV caches a missing key',async t=>{
+  const writes=[];const e={...env,PREFERRED:{get:async()=>null,put:async(...args)=>writes.push(args)}};
+  t.mock.method(globalThis,'fetch',async()=>new Response('104.17.1.1#source'));
+  const response=await createHandler(()=>{}).fetch(new Request(`https://${env.PUBLIC_HOST}/s/${env.SUB_TOKEN}/proxies.yaml`),e,{});
+  const content=YAML.parse(await response.text());assert(content.proxies.some(p=>p.server==='104.17.1.1'));assert.equal(writes.length,3);
 });
