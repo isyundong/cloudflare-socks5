@@ -35,6 +35,8 @@ try {
   const ready=await mf.ready;
   const reservation=net.createServer();reservation.listen(0,'127.0.0.1');await once(reservation,'listening');const localPort=reservation.address().port;await new Promise(r=>reservation.close(r));
   const config=YAML.parse(profile(env));config['mixed-port']=localPort;delete config['proxy-providers'];
+  // Never modify host routes or DNS in this loopback-only transport test.
+  config.tun.enable=false;config.dns.enable=false;
   // Test-only plaintext loopback transport. Production output requires TLS: true.
   config.proxies[0].server=ready.hostname;config.proxies[0].port=Number(ready.port);config.proxies[0].tls=false;
   config['proxy-groups']=[{name:'PROXY',type:'select',proxies:[config.proxies[0].name]}];

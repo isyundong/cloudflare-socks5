@@ -60,7 +60,7 @@ Clash 的节点类型显示为 **VLESS**，因为 Clash 到 Worker 需要可经 
 
 - Cloudflare 禁止 Worker TCP 连接到 CF 自身 IP、内网和 localhost。上游应使用真实公网地址或 DNS-only 域名，不能用橙云域名；上游若仅允许你家 IP，也需要调整访问限制。Worker TCP 出口并不属于常见的 CDN 回源网段。
 - 普通 SOCKS5 不加密 Worker 到上游这一段，账号密码也在这一段明文传输。只有上游明确提供 SOCKS over TLS 时，才把 `UPSTREAM_TLS` 设为 `true`；启用后验证证书。HTTPS 网站自身仍有应用层 TLS。
-- 本项目只连接固定上游，不会在上游失败时改用 Worker 直连目标网站。所有业务流量路由到 PROXY；订阅下载本身通过自有域名直接请求，避免启动时循环依赖。
+- 本项目只连接固定上游，不会在上游失败时改用 Worker 直连目标网站。允许的业务 TCP 流量路由到 PROXY，普通 UDP 和捕获的 IPv6 目标流量被拒绝；订阅下载本身通过自有域名直接请求，避免启动时循环依赖。
 - UUID 是节点访问凭据；订阅链接能获取 UUID。两者都应保密，泄露时分别更换 `UUID`、`SUB_TOKEN`，重新生成客户端订阅 URL 并导入。仅换订阅令牌不能撤销已获得的 UUID。
 - 上游账号密码只放 Worker Secrets。关闭应用日志采集；但 Cloudflare 平台仍可能保留其基础设施日志。取数请求不携带 UUID、订阅令牌或上游账号密码，Cloudflare 可添加 `CF-Worker` 等来源元数据。
 - TCP 转 WebSocket 有额外开销，没有 UDP/半关闭保证；上传等待队列上限 1 MiB，超限断开，不无限排队。高并发和大流量需要实测，并受 Cloudflare 当前套餐限制。
@@ -87,3 +87,7 @@ node tools/smoke-mihomo.mjs /absolute/path/to/mihomo
 测试包含 VLESS 分包、SOCKS5 认证失败、顺序转发、公开来源过滤、订阅与凭据隔离，以及 workerd 运行时连接本地 SOCKS5 测试服务器的真实 TCP 往返。`check` 只打包，不部署。开发中的端到端测试使用虚构凭据，不代表你的公网链路已验证。
 
 协议依据：[Xray VLESS](https://github.com/XTLS/Xray-core/blob/main/proxy/vless/encoding/encoding.go)、[RFC 1928](https://www.rfc-editor.org/rfc/rfc1928)、[RFC 1929](https://www.rfc-editor.org/rfc/rfc1929)、[Worker TCP sockets](https://developers.cloudflare.com/workers/runtime-apis/tcp-sockets/)、[Mihomo proxy-providers](https://wiki.metacubex.one/config/proxy-providers/)。
+
+## 客户端 TUN 与 DNS
+
+完整订阅已包含偏隐私的 TUN、DNS 和路由配置：网站 DNS 经代理加密查询，捕获的 IPv6 目标流量和非 DNS 的普通 UDP 被拒绝，可能影响视频通话、游戏和 QUIC。Clash Verge Rev 仍需启用 TUN 并检查配置覆盖；Linux Mihomo 需要对应权限。更新时刷新完整配置，不能只更新节点。详见 [多设备设置与保护边界](docs/privacy.md)。

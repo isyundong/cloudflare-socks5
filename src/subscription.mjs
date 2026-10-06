@@ -25,7 +25,24 @@ export function profile(env) {
   const fallback = nodes(env, [])[0]; fallback.name = '自有域名 · 备用';
   return yaml({
     'mixed-port': 7890, 'allow-lan': false, 'bind-address': '127.0.0.1',
-    mode: 'rule', 'log-level': 'warning', ipv6: false,
+    mode: 'rule', 'log-level': 'warning',
+    // IPv6 stays enabled for TUN capture, but AAAA answers and IPv6 exits are blocked.
+    ipv6: true,
+    tun: {
+      enable: true, stack: 'gvisor', 'auto-route': true, 'strict-route': true,
+      'auto-detect-interface': true, 'dns-hijack': ['any:53', 'tcp://any:53'],
+      'inet6-address': ['fdfe:dcba:9876::1/126'],
+      'route-address': ['0.0.0.0/0', '::/0'],
+    },
+    dns: {
+      enable: true, listen: '127.0.0.1:1053', ipv6: false,
+      'enhanced-mode': 'fake-ip', 'fake-ip-range': '198.18.0.1/16',
+      'respect-rules': true, 'prefer-h3': false,
+      'default-nameserver': ['https://1.1.1.1/dns-query'],
+      'proxy-server-nameserver': ['https://1.1.1.1/dns-query#DIRECT', 'https://1.0.0.1/dns-query#DIRECT'],
+      'direct-nameserver': ['https://1.1.1.1/dns-query#DIRECT', 'https://1.0.0.1/dns-query#DIRECT'],
+      nameserver: ['https://1.1.1.1/dns-query#PROXY', 'https://1.0.0.1/dns-query#PROXY'],
+    },
     proxies: [fallback],
     'proxy-providers': {'CF入口': {
       type: 'http', url: `https://${env.PUBLIC_HOST}/s/${env.SUB_TOKEN}/proxies.yaml`,
@@ -37,6 +54,6 @@ export function profile(env) {
       {name: '自动优选', type: 'url-test', proxies: [fallback.name], use: ['CF入口'],
         url: 'https://www.gstatic.com/generate_204', interval: 300, tolerance: 80, lazy: false},
     ],
-    rules: ['MATCH,PROXY'],
+    rules: ['IP-CIDR6,::/0,REJECT,no-resolve', 'NETWORK,udp,REJECT', 'MATCH,PROXY'],
   }) + '\n';
 }

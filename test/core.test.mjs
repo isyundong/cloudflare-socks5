@@ -69,7 +69,7 @@ test('profile refreshes provider and checks entire proxy path; no DIRECT traffic
   const c=YAML.parse(profile(env));assert.equal(c['mixed-port'],7890);assert.equal(c['allow-lan'],false);
   assert.equal(c['proxy-providers']['CF入口'].interval,1800);
   assert.equal(c['proxy-providers']['CF入口']['health-check'].interval,300);
-  assert.equal(c['proxy-groups'][1].tolerance,80);assert.deepEqual(c.rules,['MATCH,PROXY']);
+  assert.equal(c['proxy-groups'][1].tolerance,80);assert.deepEqual(c.rules,['IP-CIDR6,::/0,REJECT,no-resolve','NETWORK,udp,REJECT','MATCH,PROXY']);
   assert(c['proxy-groups'].every(g=>!g.proxies.includes('DIRECT')));assert.equal(c.proxies[0]['skip-cert-verify'],false);
 });
 test('provider changes only entry server; upstream credentials never appear in YAML',()=> {
@@ -104,4 +104,13 @@ test('first provider response uses fetched IPs even when KV caches a missing key
   t.mock.method(globalThis,'fetch',async()=>new Response('104.17.1.1#source'));
   const response=await createHandler(()=>{}).fetch(new Request(`https://${env.PUBLIC_HOST}/s/${env.SUB_TOKEN}/proxies.yaml`),e,{});
   const content=YAML.parse(await response.text());assert(content.proxies.some(p=>p.server==='104.17.1.1'));assert.equal(writes.length,3);
+});
+
+test('full profile captures DNS and IPv6, blocks UDP and sends website DNS through PROXY',()=>{
+  const c=YAML.parse(profile(env));assert.equal(c.tun.enable,true);assert.equal(c.tun['strict-route'],true);
+  assert.deepEqual(c.tun['dns-hijack'],['any:53','tcp://any:53']);assert(c.tun['route-address'].includes('::/0'));
+  assert.equal(c.ipv6,true);assert.equal(c.dns.ipv6,false);assert.equal(c.dns['respect-rules'],true);
+  assert(c.dns.nameserver.every(s=>s.startsWith('https://')&&s.endsWith('#PROXY')));
+  assert(c.dns['proxy-server-nameserver'].every(s=>s.startsWith('https://')&&s.endsWith('#DIRECT')));
+  assert.equal(c.dns.listen,'127.0.0.1:1053');assert(!c.dns.fallback);
 });
